@@ -185,28 +185,24 @@ public:
 	}
 	Vec3 dCu(double t, double u) //计算dC/du
 	{
-		double xt, yt, _; 
-		std::tie(xt, yt, _) = curve->value(t).unpack();
+		double xt, yt, _;  std::tie(xt, yt, _) = curve->value(t).unpack();
 		return Vec3(yt * (-sin(u)), 0.0, yt * cos(u));
 	}
 	Vec3 dCt(double t, double u) //计算dC/dt
 	{
-		double dxt, dyt, _;
-		std::tie(dxt, dyt, _) = curve->derive(t).unpack();
+		double dxt, dyt, _; std::tie(dxt, dyt, _) = curve->derive(t).unpack();
 		return Vec3(dyt * cos(u), dxt, dyt * sin(u));
 	}
 	virtual Vec3 get_normvec(Vec3 point) //Warning: 参数为Vec3(t, u, 0)
 	//\vec{n} = (\frac{dC}{du} \times \frac{dC}{dt})
 	{
-		double t, u, _;
-		std::tie(t, u, _) = point.unpack();
+		double t, u, _; std::tie(t, u, _) = point.unpack();
 		return dCu(t, u).cross(dCt(t, u));
 		//return dCt(t, u).cross(dCu(t, u));
 	}
 	virtual Vec3 get_color(Vec3 point) const // Warning: 参数为Vec3(t, u, 0)
 	{
-		double t, u, _;
-		std::tie(t, u, _) = point.unpack();
+		double t, u, _; std::tie(t, u, _) = point.unpack();
 		//printf("(t, u) = (%f, %f), color: ", t, u);
 		//texture->query((u / PI + 1) / 2, t).print(); printf("\n");
 		return texture->query((u / PI + 1) / 2, t);
@@ -262,36 +258,43 @@ public:
 		double s0;
 		std::tie(s0, p0) = bound->intersect(r); //先对包围盒求交
 		if (s0 > INF - 1) return std::make_tuple(INF, Vec3());
-		double x0, y0, z0;
-		std::tie(x0, y0, z0) = (p0 - center).unpack();
+		double x0, y0, z0; std::tie(x0, y0, z0) = (p0 - center).unpack();
 		//printf("initial (x, y, z) = (%f, %f, %f)\n", x0, y0, z0);
 		double r0 = sqrt(sqr(x0) + sqr(z0));
-		double u0 = z0 < 0 ? -acos(x0 / r0) : acos(x0 / r0); //u0的初值
-		double t0 = fix01(y0 / (ymax_point.x - ymin_point.x)); //用直线来估计t0的初值
+		//double u0 = z0 < 0 ? -acos(x0 / r0) : acos(x0 / r0); //u0的初值
+		//double t0 = fix01(y0 / (ymax_point.x - ymin_point.x)); //用直线来估计t0的初值
 		//printf("initial solution (s, t, u)=(%f, %f, %f)\n", s0, t0, u0);
 
-		int step = 0;
-		Vec3 solu(s0, t0, u0);
-		Vec3 last_solu;
-		Vec3 value = update_value(r, solu);
+		//取9个点分别求交 找合适的交点
+		Vec3 retsolu(INF, 0, 0);
+		for(double t0 = 0.2; t0 < 0.81; t0 += 0.3)
+			for (double u0 = -2 * PI / 3; u0 < 2.01 * PI / 3; u0 += 2 * PI / 3)
+			{
+				int step = 0;
+				Vec3 solu(s0, t0, u0);
+				Vec3 last_solu;
+				Vec3 value = update_value(r, solu);
 
-		while (value.norminf() > eps)
-		{
-			step++;
-			last_solu = solu;
-			Vec3 dcu = dCu(solu.y, solu.z);
-			Vec3 dct = dCt(solu.y, solu.z);
-			double jacobi[3][3] = { {-r.dir.x, dct.x, dcu.x}, {-r.dir.y, dct.y, dcu.y}, {-r.dir.z, dct.z, dcu.z} };
-			double cvalue[3] = { value.x, value.y, value.z };
-			Vec3 delta_solu = solve_lineq(jacobi, cvalue);
-			solu = fix(last_solu - delta_solu);
-			//printf("present solution:"); solu.print(); printf("\n");
-			value = update_value(r, solu);
-			//printf("present value:"); value.print(); printf("\n");
-			if (step > 25 || !solu.isNormal()) return std::make_tuple(INF, Vec3());
-		}
+				while (value.norminf() > eps)
+				{
+					step++;
+					last_solu = solu;
+					Vec3 dcu = dCu(solu.y, solu.z);
+					Vec3 dct = dCt(solu.y, solu.z);
+					double jacobi[3][3] = { {-r.dir.x, dct.x, dcu.x}, {-r.dir.y, dct.y, dcu.y}, {-r.dir.z, dct.z, dcu.z} };
+					double cvalue[3] = { value.x, value.y, value.z };
+					Vec3 delta_solu = solve_lineq(jacobi, cvalue);
+					solu = fix(last_solu - delta_solu);
+					//printf("present solution:"); solu.print(); printf("\n");
+					value = update_value(r, solu);
+					//printf("present value:"); value.print(); printf("\n");
+					if (step > 10 || !solu.isNormal()) { solu = Vec3(INF, 0, 0); break; }
+				}
+				if (solu.x < retsolu.x) retsolu = solu;
+			}
+
 		//value.print(); printf("\nEND\n");
-		return std::make_tuple(solu.x, Vec3(solu.y, solu.z, 0.0));
+		return std::make_tuple(retsolu.x, Vec3(retsolu.y, retsolu.z, 0.0));
 
 	}
 	~BezierVase() { if (curve) delete curve; if (bound) delete bound; }

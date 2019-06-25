@@ -9,6 +9,7 @@
 #include <fstream>
 #include <vector>
 #include <cassert>
+#include <string>
 
 #define sqr(x) ((x) * (x))
 #define sign(x) ((x) > 0 ? 1 : -1)

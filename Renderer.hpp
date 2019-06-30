@@ -3,13 +3,14 @@
 #include <omp.h>
 #include "KDTree.hpp"
 
-#define THREAD 6
-#define ITER 50 //迭代轮数
+#define THREAD 6 //线程数
+#define ITER 100 //迭代轮数
 #define PTC 600000 //每轮光子数
 #define MAXPTC 12000000 //最大光子数
-#define APERT 0 //光圈大小
-#define SAMP 2
-#define LIGHTRATE 1.5
+#define APERT 0.05 //光圈大小
+#define LIGHTRATE 1.5 //光源亮度
+#define FOVX 0.5 //视角
+#define FOVY 0.5
 
 class Renderer
 {
@@ -28,7 +29,7 @@ public:
 			it->resize(width);
 		outfile = filename;
 	}
-	void raytrace(const Ray& r, int depth, Vec3 intense, std::vector<HitPoint>& hparr, std::pair<int, int> vp);
+	void raytrace(const Ray& r, int depth, Vec3 intense, std::vector<HitPoint>& hparr, std::pair<int, int> vp, double prob);
 	void photonmap(const Ray& r, int depth, Vec3 intense, double prob, std::vector<std::vector<ViewPoint>>& viewbuf, KDTree& hptree);
 	Vec3 pathtrace(const Ray& r, int depth);
 	void ptrender();
@@ -38,8 +39,9 @@ public:
 
 void Renderer::ppmrender()
 {
+	printf("Output %s Ready", outfile.c_str());
 	Ray camera(Vec3(50, 52, 296), Vec3(0, -0.04, -1).norm()); //相机源点，视线方向
-	Vec3 cx = Vec3(width * 0.5 / height, 0, 0), cy = cx.cross(camera.dir).norm() * 0.5; //???
+	Vec3 cx = Vec3(width * FOVX / height, 0, 0), cy = cx.cross(camera.dir).norm() * FOVY; //???
 
 	int ptc = PTC;
 	for (auto iter = 0; iter < ITER; iter++) //迭代轮数
@@ -47,17 +49,16 @@ void Renderer::ppmrender()
 		fprintf(stderr, "Iteration %d:\n", iter);
 		std::vector<HitPoint> loc_hp[THREAD], hp;
 		KDTree hptree;
-#	pragma omp parallel for num_threads(THREAD) schedule(dynamic, 32)
+#	pragma omp parallel for num_threads(THREAD) schedule(dynamic, 1)
 		for (int y = 0; y < height; y++) //第一阶段:后向追踪采样
 		{
 			int rank = omp_get_thread_num();
-			if(y % 32 == 31)
-				fprintf(stderr, "\rRay Tracing Sampling %d / %d Rows (%d Samples)", y + 1, height, SAMP * 4);
+			fprintf(stderr, "\rRay Tracing Sampling %d / %d Rows (%d Samples)", y + 1, height, samples * 4);
 			for (int x = 0; x < width; x++)
 				for (int suby = 0; suby < 2; suby++) //每像素分成四个子域分别采样
 					for (int subx = 0; subx < 2; subx++)
 					{
-						for (int s = 0; s < SAMP; s++)
+						for (int s = 0; s < samples; s++)
 						{
 							double rand1 = 2 * random01(), rand2 = 2 * random01();
 							double dx = rand1 < 1 ? sqrt(rand1) - 1 : 1 - sqrt(2 - rand1);
@@ -65,7 +66,7 @@ void Renderer::ppmrender()
 							Vec3 raydir = cx * ((x + (subx + dx + 0.5) / 2) / width - 0.5) + cy * ((y + (suby + dy + 0.5) / 2) / height - 0.5) + camera.dir;
 							Vec3 raysrc = camera.orig + raydir * 140;
 							Vec3 bias = camera.orig + Vec3(2 * (random01() - 0.5), 2 * (random01() - 0.5), 0) * APERT;//调整光圈设置景深
-							raytrace(Ray(raysrc, (raysrc - bias).norm()), 0, Vec3(1, 1, 1), loc_hp[rank], std::make_pair(y, x));
+							raytrace(Ray(raysrc, (raysrc - bias).norm()), 0, Vec3(1, 1, 1), loc_hp[rank], std::make_pair(y, x), 1.0);
 						}
 					}
 					
@@ -96,22 +97,26 @@ void Renderer::ppmrender()
 				it->resize(width);
 		}
 #	pragma omp parallel for num_threads(THREAD) schedule(dynamic, 1000)
-		for (int p = 0; p < ptc; p++) //第二阶段:前向追踪送光
+		for (int p = 0; p < ptc / 3; p++) //第二阶段:前向追踪送光
 		{
 			int rank = omp_get_thread_num();
 			if (p % 1000 == 999)
-				fprintf(stderr, "\rPhoton Mapping %d / %d Rays  ", p + 1, ptc);
-			double dr = 30 * random01() - 15;
-			double dt = 2 * PI * random01();
-			Vec3 light = Vec3(50 + dr * cos(dt) , 81.6 - eps, 81.6 + dr * sin(dt));
+				fprintf(stderr, "\rPhoton Mapping %d / %d Rays  ", (p + 1) * 3, ptc);
 			Vec3 x = (1, 0, 0), y = (0, -1, 0), z = (0, 0, 1);
+			/*double dr = 30 * random01() - 15;
+			double dt = 2 * PI * random01();
+			Vec3 light = Vec3(50 + dr * cos(dt) , 81.6 - eps, 81.6 + dr * sin(dt));*/
 			double t = 2 * PI * random01();
-			double s = random01();
-			//double d = random01() < 0.5 ? 1 : -1;
-			Vec3 raydir = ((x * cos(t) + z * sin(t)) * sqrt(s) + y * sqrt(1 - s)).norm();
+			double s = PI * (random01() + 0.5) / 2;
+			Vec3 raydir = ((x * cos(t) + z * sin(t)) * cos(s) + y * sin(s)).norm();
+			Vec3 light = Vec3(50, 84, 81.6) + raydir * 8;
 			Vec3 rayintense = Vec3(1, 1, 1) * LIGHTRATE;
-			hptree.query(hptree.root, viewbuf[rank], RayPoint(light, rayintense, raydir, 1.0));
-			photonmap(Ray(light, raydir), 0, rayintense, 1.0, viewbuf[rank], hptree);
+			//Vec3 rayintense[3] = { Vec3(1, 0, 0) * LIGHTRATE, Vec3(0, 1, 0) * LIGHTRATE, Vec3(0, 0, 1) * LIGHTRATE };
+			//for (int i = 0; i < 3; i++)
+			//{
+				hptree.query(hptree.root, viewbuf[rank], RayPoint(light, rayintense, raydir, 1.0));
+				photonmap(Ray(light, raydir), 0, rayintense, 1.0, viewbuf[rank], hptree);
+			//}
 		}
 
 		for (int i = 0; i < height; i++)
@@ -126,7 +131,7 @@ void Renderer::ppmrender()
 	}
 }
 
-void Renderer::raytrace(const Ray& r, int depth, Vec3 intense, std::vector<HitPoint>& hparr, std::pair<int, int> vp)
+void Renderer::raytrace(const Ray& r, int depth, Vec3 intense, std::vector<HitPoint>& hparr, std::pair<int, int> vp, double prob)
 { //PPM第一步:从视点发出光线至漫反射面停止并记录碰撞点
 	Geometry* obj = nullptr;
 	Vec3 point;
@@ -144,16 +149,18 @@ void Renderer::raytrace(const Ray& r, int depth, Vec3 intense, std::vector<HitPo
 	}
 
 	Opt_Prop op = obj->get_op();
-	if (op == DIFF) //漫反射:保存碰撞点
+	if (op == DIFF || op == DIFR || op == DIFS) //漫反射:保存碰撞点
 	{
-		hparr.push_back(HitPoint(point, intense.mult(I), N, vp));
+		double rate = op == DIFS ? 0.8 : 1;
+		hparr.push_back(HitPoint(point, intense.mult(I), N, vp, prob * rate));
 	}
-	else if (op == SPEC) //镜面反射:反射定律
+	if (op == SPEC || op == DIFS) //镜面反射:反射定律
 	{
+		double rate = op == DIFS ? 0.2 : 1;
 		Vec3 R = L - N * L.dot(N) * 2; //镜面反射方向
-		raytrace(Ray(point, R), depth + 1, intense.mult(I), hparr, vp);
+		raytrace(Ray(point, R), depth + 1, intense.mult(I), hparr, vp, prob * rate);
 	}
-	else if (op == REFR) //折射+反射
+	if (op == REFR) //折射+反射
 	{
 		Vec3 R = L - N * L.dot(N) * 2; //反射方向
 		double ni = 1.50; //玻璃的折射率为1.5，空气的折射率为1
@@ -161,20 +168,22 @@ void Renderer::raytrace(const Ray& r, int depth, Vec3 intense, std::vector<HitPo
 		double costi = -(r.dir).dot(N); //入射角的余弦值
 		double sqrcostt = 1 - sqr(ratio) * (1 - sqr(costi)); //折射角余弦值平方
 		if (sqrcostt < 0)
-			raytrace(Ray(point, R), depth + 1, intense.mult(I), hparr, vp);
+			raytrace(Ray(point, R), depth + 1, intense.mult(I), hparr, vp, prob);
 		double costt = sqrt(sqrcostt); //折射角余弦值
 		Vec3 RT = ((L * ratio) - (N * (costt - costi * ratio))).norm(); //折射方向
 
-		double a = ni - 1, b = ni + 1, r0 = sqr(a) / sqr(b), c = 1 - (light_out == 1 ? costi : costt); //菲涅尔方程???
+		/*double a = ni - 1, b = ni + 1, r0 = sqr(a) / sqr(b), c = 1 - (light_out == 1 ? costi : costt); //菲涅尔方程???
 		double Re = r0 + (1 - r0) * pow(c, 5), Tr = 1 - Re, P = 0.25 + 0.5 * Re, RP = Re / P, TP = Tr / (1 - P);
 		if (depth <= 1)
 		{
 			raytrace(Ray(point, R), depth + 1, intense.mult(I), hparr, vp);
 			raytrace(Ray(point, RT), depth + 1, intense.mult(I), hparr, vp);
 		}
-		random01() < P ?
+		else
+			random01() < P ?
 			raytrace(Ray(point, R), depth + 1, intense.mult(I), hparr, vp) :
-			raytrace(Ray(point, RT), depth + 1, intense.mult(I), hparr, vp);
+			raytrace(Ray(point, RT), depth + 1, intense.mult(I), hparr, vp);*/
+		raytrace(Ray(point, RT), depth + 1, intense.mult(I), hparr, vp, prob);
 	}
 }
 
@@ -201,8 +210,9 @@ void Renderer::photonmap(const Ray& r, int depth, Vec3 intense,
 	}
 
 	Opt_Prop op = obj->get_op();
-	if (op == DIFF) //漫反射:随机均匀反射
+	if (op == DIFF || op == DIFR || op == DIFS) //漫反射:随机均匀反射
 	{
+		double rate = op == DIFS ? 0.8 : 1;
 		Vec3 x, y, z = N; //以交点为原点建立坐标系
 		x = abs(N.x) < 0.5 ? z.cross(Vec3(1, 0, 0)).norm() : z.cross(Vec3(0, 1, 0)).norm(); //随便叉积一个向量来确定其他坐标(但要保证数值精度);
 		y = z.cross(x);
@@ -211,15 +221,17 @@ void Renderer::photonmap(const Ray& r, int depth, Vec3 intense,
 		double dz = sqrt(sqrdz); //dz是反射光在坐标系z分量值
 		double dxy = sqrt(1 - sqrdz);
 		Vec3 R = (x * cos(theta) * dxy + y * sin(theta) * dxy + z * dz).norm();//随机选择的漫反射方向
-		hptree.query(hptree.root, viewbuf, RayPoint(point, intense, r.dir, prob));
-		photonmap(Ray(point, R), depth + 1, intense.mult(I), prob, viewbuf, hptree);
+		if(op == DIFR || light_out == 1)
+			hptree.query(hptree.root, viewbuf, RayPoint(point, intense, r.dir, prob * rate));
+		photonmap(Ray(point, R), depth + 1, intense.mult(I), prob * rate, viewbuf, hptree);
 	}
-	else if (op == SPEC) //镜面反射:反射定律
+	if (op == SPEC || op == DIFS) //镜面反射:反射定律
 	{
+		double rate = op == DIFS ? 0.2 : 1;
 		Vec3 R = L - N * L.dot(N) * 2; //镜面反射方向
-		photonmap(Ray(point, R), depth + 1, intense.mult(I), prob, viewbuf, hptree);
+		photonmap(Ray(point, R), depth + 1, intense.mult(I), prob * rate, viewbuf, hptree);
 	}
-	else if (op == REFR) //折射+反射
+	if (op == REFR) //折射+反射
 	{
 		Vec3 R = L - N * L.dot(N) * 2; //反射方向
 		double ni = 1.50; //玻璃的折射率为1.5，空气的折射率为1
@@ -235,14 +247,16 @@ void Renderer::photonmap(const Ray& r, int depth, Vec3 intense,
 		Vec3 RT = ((L * ratio) - (N * (costt - costi * ratio))).norm(); //折射方向
 		double a = ni - 1, b = ni + 1, r0 = sqr(a) / sqr(b), c = 1 - (light_out == 1 ? costi : costt);
 		double Re = r0 + (1 - r0) * pow(c, 5), Tr = 1 - Re, P = 0.25 + 0.5 * Re, RP = Re / P, TP = Tr / (1 - P);
-		if (depth <= 1)
+		/*if (depth <= 1)
 		{
 			photonmap(Ray(point, R), depth + 1, intense.mult(I), prob * Re, viewbuf, hptree);
 			photonmap(Ray(point, RT), depth + 1, intense.mult(I), prob * Tr, viewbuf, hptree);
 		}
-		random01() < P ?
+		else
+			random01() < P ?
 			photonmap(Ray(point, R), depth + 1, intense.mult(I), prob * RP, viewbuf, hptree):
-			photonmap(Ray(point, R), depth + 1, intense.mult(I), prob * TP, viewbuf, hptree);
+			photonmap(Ray(point, R), depth + 1, intense.mult(I), prob * TP, viewbuf, hptree);*/
+		photonmap(Ray(point, RT), depth + 1, intense.mult(I), prob, viewbuf, hptree);
 	}
 }
 
@@ -260,7 +274,7 @@ Vec3 Renderer::pathtrace(const Ray& r, int depth) //Path Tracing,返回值为(R,G,B)
 	Vec3 E = obj->isLight() ? obj->get_color(point) : Vec3(); //E是物体表面(R,G,B)光的发光强度
 	//I.print();
 	//if (depth > 10000) { printf("Now Depth = %d, Object Property = %d, I:", depth, obj->get_op()); I.print(); }
-	if (depth > 4)
+	if (depth > 5)
 	{
 		if (depth > 1000) return E;
 		if (random01() < I.max()) I = I / I.max();

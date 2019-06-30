@@ -37,5 +37,5 @@ int fac(int n)
 }
 int comp(int n, int i) { return fac(n) / (fac(i) * fac(n - i)); } //assert: n >= i
 
-enum Opt_Prop { BLACK, DIFF, SPEC, REFR };
+enum Opt_Prop { BLACK, DIFF, DIFR, DIFS, SPEC, REFR };
 enum Object_Type {NONE, SPHERE, PLANE, BEZIER};

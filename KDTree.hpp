@@ -37,7 +37,7 @@ public:
 		{
 			present->hp.ptclast += 1;
 			int h, w; std::tie(h, w) = present->hp.viewpoint;
-			view[h][w].add(rp.its.mult(present->hp.col) * rp.prob, rp.prob);
+			view[h][w].add(rp.its.mult(present->hp.col) * rp.prob * present->hp.prob, rp.prob);
 		}
 		query(present->left, view, rp);
 		query(present->right, view, rp);

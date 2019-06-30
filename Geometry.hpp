@@ -166,13 +166,6 @@ class BezierVase : public Geometry//assert: r = f(t), t = y 曲线方向指向上方向
 				x[i] = x[i] - A[i][j] * x[j];
 			x[i] = x[i] / A[i][i];
 		}
-
-		/*for (int i = 0; i < 3; i++)
-		{
-			for (int j = 0; j < 3; j++)
-				printf("%f ", A[i][j]);
-			printf("\n");
-		}*/
 		return Vec3(x[0], x[1], x[2]);
 	}
 
@@ -288,7 +281,7 @@ public:
 					//printf("present solution:"); solu.print(); printf("\n");
 					value = update_value(r, solu);
 					//printf("present value:"); value.print(); printf("\n");
-					if (step > 10 || !solu.isNormal()) { solu = Vec3(INF, 0, 0); break; }
+					if (step > 15 || !solu.isNormal()) { solu = Vec3(INF, 0, 0); break; }
 				}
 				if (solu.x < retsolu.x) retsolu = solu;
 			}
